@@ -1,0 +1,17 @@
+build/
+bin/
+*.engine
+*.onnx
+__pycache__/
+*.pyc
+*.mp4
+*.jpg
+*.png
+result.png
+imageStart.jpg
+imageEnd.jpg
+debug_outimg.png
+debug_mask.png
+resized_image.jpg
+result.mp4
+.vscode/
