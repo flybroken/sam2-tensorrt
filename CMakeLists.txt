@@ -110,6 +110,20 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     -lpthread
 )
 
+target_include_directories(${CMAKE_PROJECT_NAME}
+    PUBLIC
+    ${ONNXRUNTIME_ROOT}/include
+    ${TENSORRT_ROOT}/include
+    ${CUDA_TOOLKIT_ROOT_DIR}/include
+)
+
+target_include_directories(${CMAKE_PROJECT_NAME}_lib
+    PUBLIC
+    ${ONNXRUNTIME_ROOT}/include
+    ${TENSORRT_ROOT}/include
+    ${CUDA_TOOLKIT_ROOT_DIR}/include
+)
+
 # 共享库 (去掉可执行文件特有的依赖)
 target_link_libraries(${CMAKE_PROJECT_NAME}_lib
     ${OpenCV_LIBS}
