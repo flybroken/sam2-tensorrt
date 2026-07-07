@@ -1,6 +1,6 @@
-# SAM2-TensorRT: 30ms Real-time Video Object Segmentation
+# SAM2-TensorRT: Real-time Video Object Segmentation & Multi-Object Tracking
 
-> **Single target: 30ms per frame on NVIDIA A10 — fully FP16, end-to-end GPU pipeline.**
+> **Single target ~30ms/frame (~33 FPS) on NVIDIA A10 — adapted for MOT, fully FP16, end-to-end GPU pipeline.**
 
 High-performance C++ inference of Meta's [SAM2](https://github.com/facebookresearch/segment-anything-2) on NVIDIA GPUs, optimized to the metal with TensorRT.
 
@@ -25,6 +25,8 @@ High-performance C++ inference of Meta's [SAM2](https://github.com/facebookresea
 - **TBB-parallel tensor operations** — CPU-side memory bank assembly with `#pragma omp parallel for`
 - **IoU-gated memory bank** — only high-confidence frames enter history, saving memory attention cost
 - **GPU-based bounding box extraction** — `cv::cuda::threshold` + `findNonZero` entirely on GPU
+- **卡尔曼滤波目标选择优化** — 8-D Kalman 预测框与 SAM 输出 mask 的 IoU 联合评分，抑制异常 mask 输出
+- **自适应关键帧策略** — 根据目标运动状态动态决定 memory bank 写入频率，减少冗余存储
 
 ## 🏗 Architecture
 
@@ -53,7 +55,8 @@ Frame(BGR) → GPU Preprocess → Image Encoder → Memory Attention → Image D
 **Tracking:**
 - Box or point prompt initialization
 - Per-target 8-D Kalman filter (x, y, a, h, vx, vy, va, vh)
-- IoU-weighted mask selection (SAM score + Kalman prediction IoU)
+- 卡尔曼滤波器选择优化 — 8-D Kalman 预测框与 SAM mask 的 IoU 联合评分，提升遮挡/形变场景鲁棒性
+- 关键帧选取策略优化 — 基于 IoU 变化率的自适应关键帧插入，平衡追踪质量与内存开销
 - Smart memory bank — IoU threshold > 0.4
 - Multi-target support — per-object memory banks with fallback borrowing
 
