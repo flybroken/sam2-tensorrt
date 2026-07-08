@@ -37,9 +37,9 @@ bool Sam2Singleton::initialize(std::vector<std::string>& tensorrt_paths, int tra
 
     ImageEndocer_engine      = new TensorRTInference(tensorrt_paths[1], gpuId);
 
-    ImageDecoderFirst_engine = new TensorRTInference(tensorrt_paths[2], gpuId);
+    // ImageDecoderFirst_engine = new TensorRTInference(tensorrt_paths[2], gpuId);
 
-    ImageDecoderEnd_engine = new TensorRTInference(tensorrt_paths[3], gpuId);
+    // ImageDecoderEnd_engine = new TensorRTInference(tensorrt_paths[3], gpuId);
 
     MemoryEncoder_engine = new TensorRTInference(tensorrt_paths[4], gpuId);
 
@@ -62,6 +62,11 @@ bool Sam2Singleton::initialize(std::vector<std::string>& tensorrt_paths, int tra
 
         sam2Process(images, rectInfoIn, rectOut);
 
+        is_initialized.store(true);
+    }
+    else if (TRACKTYPEBYSAM2::MultiTrack == this->trackType)
+    {
+        // batch_size 和内存分配推迟到 setparms() 时执行
         is_initialized.store(true);
     }
 
@@ -286,7 +291,7 @@ bool Sam2Singleton::inference(cv::Mat &image){
     std::vector<void *>inputStr;
     inputStr.push_back(mem_attention_engine_mem7_obj16->outputData[0]);
     inputStr.push_back(ImageEndocer_engine->outputData[1]);
-    inputStr.push_back(ImageEndocer_engine->outputData[1]);
+    inputStr.push_back(ImageEndocer_engine->outputData[2]);
     ImageDecoder_engine->infer_ImageDecoder(point_val, point_labels, mem_attention_out, outputDataForImageDecoder_Second, inputStr);
 
     result_kf.best_iou = get_best_iou();    //取best iou
@@ -3314,24 +3319,24 @@ int Sam2Singleton::setparms_AllocateBatch_One(){
     tensorrt_mem_attention_data.resize(this->batch_size * 256 * 64 * 64, 0.0f);
 
     mem_attention_engine_mem7_obj16->batch_size = this->batch_size;
-    ImageDecoderFirst_engine->batch_size = this->batch_size;
+    // ImageDecoderFirst_engine->batch_size = this->batch_size;
     ImageEndocer_engine->batch_size = this->batch_size;
-    ImageDecoderEnd_engine->batch_size = this->batch_size;
+    // ImageDecoderEnd_engine->batch_size = this->batch_size;
     MemoryEncoder_engine->batch_size = this->batch_size;
     ImageDecoder_engine->batch_size = this->batch_size;
 
     /* 开辟内存 */
     mem_attention_engine_mem7_obj16->TRTtype = MemoryAttention;
-    ImageDecoderFirst_engine->TRTtype = ImageDecoderFirst;
+    // ImageDecoderFirst_engine->TRTtype = ImageDecoderFirst;
     ImageEndocer_engine->TRTtype = ImageEncoder;
-    ImageDecoderEnd_engine->TRTtype = ImageDecoderSecond;
+    // ImageDecoderEnd_engine->TRTtype = ImageDecoderSecond;
     MemoryEncoder_engine->TRTtype = MemoryEncoder;
     ImageDecoder_engine->TRTtype = ImageDecoder;
 
     mem_attention_engine_mem7_obj16->allocateInputAndOutputMemory();
-    ImageDecoderFirst_engine->allocateInputAndOutputMemory();
+    // ImageDecoderFirst_engine->allocateInputAndOutputMemory();
     ImageEndocer_engine->allocateInputAndOutputMemory();
-    ImageDecoderEnd_engine->allocateInputAndOutputMemory();
+    // ImageDecoderEnd_engine->allocateInputAndOutputMemory();
     MemoryEncoder_engine->allocateInputAndOutputMemory();
     ImageDecoder_engine->allocateInputAndOutputMemory();
 

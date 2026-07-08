@@ -37,10 +37,10 @@ else()
     message(STATUS "TensorRT API: 10.x")
 endif()
 
-if(DRAW_RESULT)
+# if(DRAW_RESULT)
     add_definitions(-DDRAW_PERSON)
     message(STATUS "Draw bounding boxes: ON")
-endif()
+# endif()
 
 # ---- CUDA ----
 set(CUDA_TOOLKIT_ROOT_DIR "$ENV{CUDA_TOOLKIT_ROOT_DIR}")

@@ -89,6 +89,48 @@ export ONNXRUNTIME_ROOT=/path/to/onnxruntime-linux-x64-gpu-x.x.x
 export CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda           # auto-detected if omitted
 ```
 
+## Get TensorRT Engine Files
+
+TensorRT 10.x required. Download ONNX files from the Releases page of this repo. Two variants are available: single-target tracking and multi-target tracking.
+
+Example:
+1. Download the desired ONNX variant
+2. Convert each ONNX file to a TensorRT engine:
+   ```bash
+   trtexec \
+       --onnx=image_encoder.onnx \
+       --saveEngine=image_encoder.engine \
+       --fp16
+   ```
+   fp16_small_singleObj:
+        ./trtexec --onnx=image_encoder.onnx --saveEngine=image_encoder.engine --fp16
+
+   fp16_small_motObj
+        ./trtexec --onnx=image_encoder.onnx --saveEngine=image_encoder.engine --fp16
+
+        ./trtexec \
+        --onnx=memory_attention7_16.onnx \
+        --saveEngine=memory_attention7_16.engine \
+        --fp16 \
+        --minShapes=current_vision_feat:1x256x64x64,current_vision_pos_embed:4096x1x256,memory_0:16x1x256,memory_1:7x1x64x64x64,memory_pos_embed:28736x1x64 \
+        --optShapes=current_vision_feat:4x256x64x64,current_vision_pos_embed:4096x4x256,memory_0:16x4x256,memory_1:7x4x64x64x64,memory_pos_embed:28736x4x64 \
+        --maxShapes=current_vision_feat:10x256x64x64,current_vision_pos_embed:4096x10x256,memory_0:16x10x256,memory_1:7x10x64x64x64,memory_pos_embed:28736x10x64
+
+        ./trtexec \
+        --onnx=/home/l1/ywd/MultiTracker/yanwendou/export_sam2_model/sam2_cpp/2onnx_tools/back_20250801/checkpoints/small_mutilObj_nostart_end/image_decoder.onnx \
+        --saveEngine=/home/l1/ywd/MultiTracker/yanwendou/export_sam2_model/sam2_cpp/2onnx_tools/back_20250801/checkpoints/small_mutilObj_nostart_end/image_decoder.engine \
+        --fp16 \
+        --minShapes=point_coords:1x2x2,point_labels:1x2,image_embed:1x256x64x64,high_res_feats_0:1x32x256x256,high_res_feats_1:1x64x128x128 \
+        --optShapes=point_coords:4x2x2,point_labels:4x2,image_embed:4x256x64x64,high_res_feats_0:4x32x256x256,high_res_feats_1:4x64x128x128 \
+        --maxShapes=point_coords:10x2x2,point_labels:10x2,image_embed:10x256x64x64,high_res_feats_0:10x32x256x256,high_res_feats_1:10x64x128x128
+
+        ./trtexec --onnx=memory_encoder.onnx --saveEngine=memory_encoder.engine --fp16 --minShapes=mask_for_mem:1x1x1024x1024,pix_feat:1x256x64x64 --optShapes=mask_for_mem:4x1x1024x1024,pix_feat:4x256x64x64 --maxShapes=mask_for_mem:10x1x1024x1024,pix_feat:10x256x64x64
+
+        注意：如果转trt有INT32或INT64的数值问题，那么将出问题的onnx，先用repo中的process.py处理下
+3. Place all engine files under `models/fp16_small_singleObj/` (or your custom path)
+
+
+
 ### Build
 
 ```bash
@@ -100,11 +142,14 @@ cmake --build build -j$(nproc)
 ### Run
 
 ```bash
-# Single image with initial bounding box (x, y, w, h)
+# Single image inference (SingleTrack)
 ./bin/SAM2 image test/photo.jpg 100 200 150 300
 
-# Video tracking + benchmark
+# Video single target (SingleTrack) 50 = video frame number
 ./bin/SAM2 video test/input.mp4 100 200 150 300 50
+
+# Video multi target (MultiTrack) 50 = video frame number
+./bin/SAM2 mot test/input.mp4 100 200 150 300 400 500 200 180 50
 ```
 
 ### API
@@ -114,17 +159,39 @@ cmake --build build -j$(nproc)
 
 auto& sam2 = TrackerBySAM2::Sam2Singleton::getInstance();
 
+// ===========================
+// SingleTrack 单目标追踪
+// ===========================
+
+// step1: initialize 构建引擎
 sam2.initialize(engine_paths, TrackerBySAM2::SingleTrack, /*gpuId=*/0);
 
-std::vector<cv::Mat> frames;
-cv::Rect init_bbox{x, y, w, h};
-std::vector<cv::Rect> out;
-sam2.sam2Process(frames, init_bbox, out);
+// step2: setparms 设定单目标参数
+std::vector<TrackerBySAM2::ParamsSam2> parms;
+parms.push_back({/*type=*/0, cv::Rect{x, y, w, h}, {/*point=*/0, 0}});
+sam2.setparms(parms);
 
-// Frame-by-frame alternative:
-for (auto& f : frames) {
-    sam2.inference(f);
-    cv::Rect r = sam2.LastRect;
+// step3: 逐帧 inference
+for (auto& frame : frames) {
+    sam2.inference(frame);
+    cv::Rect bbox = sam2.LastRect;
+}
+
+// ===========================
+// MultiTrack 多目标追踪
+// ===========================
+
+sam2.initialize(engine_paths, TrackerBySAM2::MultiTrack, /*gpuId=*/0);
+
+std::vector<TrackerBySAM2::ParamsSam2> multi_parms;
+for (auto& bbox : init_bboxes) {
+    multi_parms.push_back({0, bbox, {0, 0}});
+}
+sam2.setparms(multi_parms);
+
+for (auto& frame : frames) {
+    sam2.inference(frame);
+    cv::Rect bbox = sam2.LastRect;
 }
 ```
 
