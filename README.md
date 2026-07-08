@@ -104,6 +104,7 @@ Example:
    ```
    fp16_small_singleObj:
         ./trtexec --onnx=image_encoder.onnx --saveEngine=image_encoder.engine --fp16
+        ...
 
    fp16_small_motObj
         ./trtexec --onnx=image_encoder.onnx --saveEngine=image_encoder.engine --fp16 \
@@ -129,7 +130,8 @@ Example:
 
         ./trtexec --onnx=memory_encoder.onnx --saveEngine=memory_encoder.engine --fp16 --minShapes=mask_for_mem:1x1x1024x1024,pix_feat:1x256x64x64 --optShapes=mask_for_mem:4x1x1024x1024,pix_feat:4x256x64x64 --maxShapes=mask_for_mem:10x1x1024x1024,pix_feat:10x256x64x64
 
-        注意：如果转trt有INT32或INT64的数值问题，那么将出问题的onnx，先用repo中的process.py处理下
+        注意：如果转trt有INT32或INT64的数值问题，那么将出问题的onnx，先用repo中的process.py处理下 仓库中的onnx均是已处理过的
+
 3. Place all engine files under `models/fp16_small_singleObj/` (or your custom path)
 
 
