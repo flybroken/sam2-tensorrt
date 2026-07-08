@@ -97,9 +97,9 @@ Example:
 1. Download the desired ONNX variant
 2. Convert each ONNX file to a TensorRT engine:
    ```bash
-   trtexec \
-       --onnx=image_encoder.onnx \
-       --saveEngine=image_encoder.engine \
+   ./trtexec \
+       --onnx=/memory_attention7_16.onnx \
+       --saveEngine=memory_attention7_16.engine \
        --fp16
    ```
    fp16_small_singleObj:
@@ -121,8 +121,8 @@ Example:
         --maxShapes=current_vision_feat:10x256x64x64,current_vision_pos_embed:4096x10x256,memory_0:16x10x256,memory_1:7x10x64x64x64,memory_pos_embed:28736x10x64
 
         ./trtexec \
-        --onnx=/home/l1/ywd/MultiTracker/yanwendou/export_sam2_model/sam2_cpp/2onnx_tools/back_20250801/checkpoints/small_mutilObj_nostart_end/image_decoder.onnx \
-        --saveEngine=/home/l1/ywd/MultiTracker/yanwendou/export_sam2_model/sam2_cpp/2onnx_tools/back_20250801/checkpoints/small_mutilObj_nostart_end/image_decoder.engine \
+        --onnx=image_decoder.onnx \
+        --saveEngine=image_decoder.engine \
         --fp16 \
         --minShapes=point_coords:1x2x2,point_labels:1x2,image_embed:1x256x64x64,high_res_feats_0:1x32x256x256,high_res_feats_1:1x64x128x128 \
         --optShapes=point_coords:4x2x2,point_labels:4x2,image_embed:4x256x64x64,high_res_feats_0:4x32x256x256,high_res_feats_1:4x64x128x128 \
