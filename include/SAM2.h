@@ -75,7 +75,7 @@ public:
     //infer is for mem_attention infer
     bool MemAttentioninfer(std::vector<Ort::Value>& input_tensor, float* ptr_tensorrt_mem_attention_data);
 
-    void infer_ImageEncoder(void* gpuPtr_image, std::vector<int>& batch_size_info, std::vector<std::vector<float>>& outputHostData); 
+    void infer_ImageEncoder(void* gpuPtr_image, std::vector<int>& batch_size_info, std::vector<std::vector<float>>& outputHostData, TRACKTYPEBYSAM2 trackType); 
     void infer_ImageDecoderFirst(std::vector<float>& point_val,
                                  std::vector<int>&   point_labels,
                                  std::vector<Ort::Value>& mem_attention_out,

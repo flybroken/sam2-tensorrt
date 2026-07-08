@@ -106,7 +106,7 @@ bool Sam2Singleton::inference(cv::Mat &image){
     #endif
 
     std::vector<int> batch_size_data(this->batch_size, 2);
-    ImageEndocer_engine->infer_ImageEncoder(gpu_buffers[4].data, batch_size_data, outputHostData);
+    ImageEndocer_engine->infer_ImageEncoder(gpu_buffers[4].data, batch_size_data, outputHostData, this->trackType);
     std::vector<Ort::Value> img_encoder_out;
     createTensorImgEncoder(img_encoder_out);
 
@@ -683,7 +683,7 @@ void Sam2Singleton::mem_attention_infer(std::vector<Ort::Value>&img_encoder_out,
 
         // 第0帧 特殊处理
         std::memcpy(tensorrt_mem_attention_data.data(), mem_attention_out[0].GetTensorData<float>(), this->batch_size * 256 * 64 * 64 * sizeof(float));
-        cudaMemcpy(mem_attention_engine_mem7_obj16->outputData[0], 
+        cudaMemcpy(mem_attention_engine_mem7_obj16->outputData[0],
                    tensorrt_mem_attention_data.data(), this->batch_size * 256 * 64 * 64 * sizeof(float), cudaMemcpyHostToDevice);
         return;
     }
@@ -1863,7 +1863,7 @@ bool TensorRTInference::MemAttentioninfer(std::vector<Ort::Value>& input_tensor,
     return true;
 }
 
-void TensorRTInference::infer_ImageEncoder(void* gpuPtr_image, std::vector<int>& batch_size_info, std::vector<std::vector<float>>& outputHostData) {
+void TensorRTInference::infer_ImageEncoder(void* gpuPtr_image, std::vector<int>& batch_size_info, std::vector<std::vector<float>>& outputHostData, TRACKTYPEBYSAM2 trackType) {
     cudaError_t cudaStatus = cudaSetDevice(this->gpuId);
     #ifdef TIME_DEBUG
     auto start = std::chrono::high_resolution_clock::now();
@@ -1874,7 +1874,7 @@ void TensorRTInference::infer_ImageEncoder(void* gpuPtr_image, std::vector<int>&
     // 设置输入张量的形状
     std::vector<nvinfer1::Dims> inputShapes = {
         {4, {1, 3, 1024, 1024}},  // image: [batch_size, channels, height, width]
-        {1, {batch_size_info.size()}}  // batch_size: [batch_size]
+        {1, {(int64_t)batch_size_info.size()}}  // batch_size: [batch_size] -- [N]
     };
 
 
@@ -1894,7 +1894,7 @@ void TensorRTInference::infer_ImageEncoder(void* gpuPtr_image, std::vector<int>&
     // 处理输入张量
     for (size_t i = 0; i < inputNames.size(); ++i) {
 
-        if (inputNames[i] == "batch_size") {
+        if (inputNames[i] == "batch_size" && trackType == TRACKTYPEBYSAM2::SingleTrack) {
             continue;
         }
 

@@ -106,7 +106,10 @@ Example:
         ./trtexec --onnx=image_encoder.onnx --saveEngine=image_encoder.engine --fp16
 
    fp16_small_motObj
-        ./trtexec --onnx=image_encoder.onnx --saveEngine=image_encoder.engine --fp16
+        ./trtexec --onnx=/home/l1/ywd/MultiTracker/yanwendou/export_sam2_model/sam2_cpp/2onnx_tools/back_20250801/checkpoints/small_mutilObj_nostart_end/image_encoder.onnx --saveEngine=/home/l1/ywd/MultiTracker/yanwendou/export_sam2_model/sam2_cpp/2onnx_tools/back_20250801/checkpoints/small_mutilObj_nostart_end/image_encoder.engine --fp16 \
+            --minShapes=batch_size:1 \
+            --optShapes=batch_size:2 \
+            --maxShapes=batch_size:10
 
         ./trtexec \
         --onnx=memory_attention7_16.onnx \
