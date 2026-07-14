@@ -6,6 +6,16 @@ High-performance C++ inference of Meta's [SAM2](https://github.com/facebookresea
 
 ---
 
+## 🎬 Demo
+
+**Single Target Tracking** — box prompt, real-time mask + bounding box at ~33 FPS:
+
+<video src="assets/demo/single_track_demo.mp4" controls muted autoplay loop width="100%"></video>
+
+**Multi Target Tracking** — multiple objects simultaneously:
+
+<video src="assets/demo/multi_track_demo.mp4" controls muted autoplay loop width="100%"></video>
+
 ## 🚀 Performance
 
 | GPU | Mode | Precision | Latency | FPS | Resolution |

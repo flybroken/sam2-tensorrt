@@ -62,6 +62,17 @@ bool Sam2Singleton::initialize(std::vector<std::string>& tensorrt_paths, int tra
 
         sam2Process(images, rectInfoIn, rectOut);
 
+        //clear old 记忆帧
+        this->infer_status.current_frame = 0;
+        this->infer_status.obj_ptr_first.clear();
+        this->infer_status.status_first.clear();
+        this->infer_status.status_recent.clear();
+        this->infer_status.obj_ptr_recent.clear();
+        this->infer_status.last_memoryFeature.clear();
+        this->infer_status.last_objPtr.clear();
+        this->parms.clear();
+        this->LastRect = cv::Rect();
+
         is_initialized.store(true);
     }
     else if (TRACKTYPEBYSAM2::MultiTrack == this->trackType)

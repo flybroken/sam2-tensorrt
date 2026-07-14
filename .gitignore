@@ -7,6 +7,8 @@ __pycache__/
 *.mp4
 *.jpg
 *.png
+*.avi
+!assets/demo/*.mp4
 result.png
 imageStart.jpg
 imageEnd.jpg

@@ -204,14 +204,19 @@ static void demo_mot_video(
         // 每帧画 bbox 并写入视频
         cv::Mat out_frame = frames[i].clone();
         // 初始框（红色）
-        // for (const auto& bbox : init_bboxes) {
-        //     cv::rectangle(out_frame, bbox, cv::Scalar(0, 0, 255), 2);
-        // }
+
+        if (0 == i)
+        {
+            for (const auto& bbox : init_bboxes) {
+                cv::rectangle(out_frame, bbox, cv::Scalar(0, 0, 255), 2);
+            }
+        }
+
         // // 当前追踪框（绿色）
         // cv::rectangle(out_frame, sam2.LastRect, cv::Scalar(0, 255, 0), 2);
-        // if (writer.isOpened()) {
-        //     writer.write(out_frame);
-        // }
+        if (writer.isOpened()) {
+            writer.write(out_frame);
+        }
 
         if (i == 0) {
             cv::imwrite("imageStart.jpg", out_frame);
