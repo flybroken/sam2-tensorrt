@@ -9,12 +9,12 @@ High-performance C++ inference of Meta's [SAM2](https://github.com/facebookresea
 ## 🎬 Demo
 
 **Single Target Tracking** — box prompt, real-time mask + bounding box at ~33 FPS:
-<video src="https://github.com/user-attachments/assets/8ad5fa0b-8825-4c49-a2a3-2fc699a92775"
+<video src="https://github.com/user-attachments/assets/ee9281fe-58aa-4f20-b914-1dceed0985a3"
 controls muted loop width="100%">
 </video>
 
 **Multi Target Tracking** — multiple objects simultaneously:
-<video src="https://github.com/user-attachments/assets/a00d5ab8-46fe-4536-bb35-ae2f30ac0543"
+<video src="https://github.com/user-attachments/assets/2a393bca-4264-4c2c-b6da-ebc43cd93371"
 controls muted loop width="100%">
 </video>
 
