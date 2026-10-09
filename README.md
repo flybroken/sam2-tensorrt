@@ -119,6 +119,15 @@ Example:
         ./trtexec --onnx=image_encoder.onnx --saveEngine=image_encoder.engine --fp16
         ...
 
+        # image_decoder: batch=1, num_points∈[1,2]（1=点提示，2=框提示）
+        ./trtexec \
+        --onnx=image_decoder.onnx \
+        --saveEngine=image_decoder.engine \
+        --fp16 \
+        --minShapes=point_coords:1x1x2,point_labels:1x1,image_embed:1x256x64x64,high_res_feats_0:1x32x256x256,high_res_feats_1:1x64x128x128 \
+        --optShapes=point_coords:1x2x2,point_labels:1x2,image_embed:1x256x64x64,high_res_feats_0:1x32x256x256,high_res_feats_1:1x64x128x128 \
+        --maxShapes=point_coords:1x2x2,point_labels:1x2,image_embed:1x256x64x64,high_res_feats_0:1x32x256x256,high_res_feats_1:1x64x128x128
+
    fp16_small_motObj
         ./trtexec --onnx=image_encoder.onnx --saveEngine=image_encoder.engine --fp16 \
             --minShapes=batch_size:1 \
@@ -137,13 +146,21 @@ Example:
         --onnx=image_decoder.onnx \
         --saveEngine=image_decoder.engine \
         --fp16 \
-        --minShapes=point_coords:1x2x2,point_labels:1x2,image_embed:1x256x64x64,high_res_feats_0:1x32x256x256,high_res_feats_1:1x64x128x128 \
+        --minShapes=point_coords:1x1x2,point_labels:1x1,image_embed:1x256x64x64,high_res_feats_0:1x32x256x256,high_res_feats_1:1x64x128x128 \
         --optShapes=point_coords:4x2x2,point_labels:4x2,image_embed:4x256x64x64,high_res_feats_0:4x32x256x256,high_res_feats_1:4x64x128x128 \
         --maxShapes=point_coords:10x2x2,point_labels:10x2,image_embed:10x256x64x64,high_res_feats_0:10x32x256x256,high_res_feats_1:10x64x128x128
 
         ./trtexec --onnx=memory_encoder.onnx --saveEngine=memory_encoder.engine --fp16 --minShapes=mask_for_mem:1x1x1024x1024,pix_feat:1x256x64x64 --optShapes=mask_for_mem:4x1x1024x1024,pix_feat:4x256x64x64 --maxShapes=mask_for_mem:10x1x1024x1024,pix_feat:10x256x64x64
 
         注意：如果转trt有INT32或INT64的数值问题，那么将出问题的onnx，先用repo中的process.py处理下 仓库中的onnx均是已处理过的
+
+> **关于 image_decoder 的 num_points（点提示）**
+> `point_coords` 第二维即 num_points：**2 = 框提示**（两个角点，label 2/3），**1 = 点提示**（一个前景点，label 1）。
+> 上面的 profile 已把 num_points 范围设为 **[1,2]**，一份 engine 同时支持框和点。注意：
+> - **必须用动态模式导出 onnx**（`export_onnx.py` 不要加 `--static_batch`），否则 num_points 会被锁成 2，点模式无法使用。
+> - 旧的 `--minShapes=point_coords:1x2x2` 把点数下界钉死在 2，需改为 `1x1x2`。
+> - 导出脚本现在会自动执行 dtype 清洗（把 DOUBLE 常量转 FLOAT32），产物可直接被 onnxruntime 加载。
+> 详细输入方式见 [INPUT_MODES.md](INPUT_MODES.md)。
 
 3. Place all engine files under `models/fp16_small_singleObj/` (or your custom path)
 
@@ -168,6 +185,9 @@ cmake --build build -j$(nproc)
 
 # Video multi target (MultiTrack) 50 = video frame number
 ./bin/SAM2 mot test/input.mp4 100 200 150 300 400 500 200 180 50
+
+# Video single target with POINT prompt (SingleTrack) 50 = video frame number
+./bin/SAM2 point test/input.mp4 500 400 50
 ```
 
 ### API
@@ -211,6 +231,23 @@ for (auto& frame : frames) {
     sam2.inference(frame);
     cv::Rect bbox = sam2.LastRect;
 }
+
+// ===========================
+// SingleTrack 点提示（点分割）
+// ===========================
+
+// type = PromptPoint(1)，使用 prompt_point（原图像素坐标）
+std::vector<TrackerBySAM2::ParamsSam2> point_parms;
+point_parms.push_back({TrackerBySAM2::PROMPTTYPE::PromptPoint, cv::Rect(), cv::Point(500, 400)});
+sam2.setparms(point_parms);
+
+for (auto& frame : frames) {
+    sam2.inference(frame);
+    cv::Rect bbox = sam2.LastRect;                  // 输出包围盒
+    const auto& masks = sam2.getLastMasks();        // 二值 mask（CV_8UC1, 0/255），长度 = 目标数
+}
+
+// 注意：同一批的提示类型必须一致（要么全框 N=2，要么全点 N=1），混合会抛异常
 ```
 
 ## 📦 Models
