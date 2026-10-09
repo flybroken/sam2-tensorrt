@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import onnx
@@ -40,7 +41,11 @@ def export_image_encoder(model, onnx_path, dynamic_batch=True):
         if param.dtype == torch.int64:
             param.data = param.data.to(torch.int32)
 
-    out = model(image = input_img, batch_size = batch_size)
+    # 动态分支用 ImageEncoder_MotObj（需要 batch_size）；静态分支用 ImageEncoder（仅 image）
+    if dynamic_batch:
+        out = model(image = input_img, batch_size = batch_size)
+    else:
+        out = model(image = input_img)
 
     output_names = ["pix_feat","high_res_feat0","high_res_feat1","vision_feats","vision_pos_embed"]
 
@@ -1067,52 +1072,42 @@ model_checkpoints_file = "checkpoints/sam2_hiera_{}.pt".format(model_type)
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="导出SAM2为onnx文件")
-    parser.add_argument("--outdir",type=str,default=onnx_output_path,required=False,help="path")
+    parser.add_argument("--outdir",type=str,default=onnx_output_path,required=False,help="输出根目录")
     parser.add_argument("--config",type=str,default=model_config_file,required=False,help="*.yaml")
     parser.add_argument("--checkpoint",type=str,default=model_checkpoints_file, required=False,help="*.pt")
-    parser.add_argument("--static_batch", action="store_true", default=False,
-                        help="导出静态shape ONNX（默认动态batch，支持多目标）")
+    parser.add_argument("--variant",type=str,default="both",choices=["single","mot","both"],
+                        help="导出哪一份：single=单目标(静态)，mot=多目标(动态)，both=两份都导")
     args = parser.parse_args()
-
-    dynamic_batch = not args.static_batch
-
 
     sam2_model = build_sam2(args.config, args.checkpoint, device="cpu")
 
+    # single -> singleObj：除 image_decoder 外均为静态
+    # mot    -> motObj   ：全部动态（image_encoder 含 batch_size 输入）
+    # 注意：image_decoder 两份都动态导出，使 num_points 可变（1=点提示，2=框提示）
+    variants = ["single", "mot"] if args.variant == "both" else [args.variant]
+    for variant in variants:
+        dynamic_batch = (variant == "mot")
+        subdir = "singleObj" if variant == "single" else "motObj"
+        outdir = os.path.join(args.outdir, subdir) + "/"
+        os.makedirs(outdir, exist_ok=True)
+        print(f"\n########## export variant={variant} (dynamic={dynamic_batch}) -> {outdir} ##########")
 
-    # image_encoder = ImageEncoder(sam2_model).cpu()
-    image_encoder = ImageEncoder_MotObj(sam2_model).cpu()
-    export_image_encoder(image_encoder, args.outdir, dynamic_batch)
+        # image_encoder：单目标用 ImageEncoder(静态,仅 image)；多目标用 ImageEncoder_MotObj(动态,含 batch_size)
+        if variant == "mot":
+            image_encoder = ImageEncoder_MotObj(sam2_model).cpu()
+        else:
+            image_encoder = ImageEncoder(sam2_model).cpu()
+        export_image_encoder(image_encoder, outdir, dynamic_batch)
 
+        # memory_attention
+        mem_attention = MemAttention(sam2_model).cpu()
+        export_memory_attention7_16(mem_attention, outdir, dynamic_batch)
 
+        # image_decoder：始终动态，保证 num_points（1=点提示/2=框提示）可变
+        image_decoder = ImageDecoder(sam2_model).cpu()
+        export_image_decoder(image_decoder, outdir, True)
 
-    # mem_attention = MemAttention(sam2_model).cpu() 
-    # export_memory_attention7_16(mem_attention, args.outdir, dynamic_batch)
+        # memory_encoder
+        mem_encoder = MemEncoder(sam2_model).cpu()
+        export_memory_encoder(mem_encoder, outdir, dynamic_batch)
 
-
-    # image_decoderStart = ImageDecoder_Start(sam2_model).cpu()
-    # export_image_decoderStart(image_decoderStart,args.outdir, dynamic_batch)
-
-
-    # image_decoderEnd = ImageDecoder_End(sam2_model).cpu()
-    # export_image_decoderEnd(image_decoderEnd, args.outdir, dynamic_batch)
-
-
-    # image_decoder   = ImageDecoder(sam2_model).cpu()
-    # export_image_decoder(image_decoder, args.outdir, dynamic_batch)
-
-    # mem_encoder   = MemEncoder(sam2_model).cpu()
-    # export_memory_encoder(mem_encoder,args.outdir, dynamic_batch)
-
-
-
-
-
-
-
-
-
-
-
-    # image_decoder = ImageDecoder(sam2_model).cpu()
-    # export_image_decoder(image_decoder,args.outdir, dynamic_batch)

@@ -122,16 +122,25 @@ private:
     int gpuId = 0;
 };
 
+// 每个目标的提示点数上限（同时也是 image_decoder engine 的 maxShapes 上限）
+static const int MAX_POINTS = 8;
+
 // 提示类型
 enum PROMPTTYPE {
-    PromptBox = 0,    // 使用 prompt_box 作为提示（送两个角点，label 2/3）
-    PromptPoint = 1,  // 使用 prompt_point 作为提示（送一个前景点，label 1）
+    PROMPT_BOX = 0,    // 使用 prompt_box 作为提示（送两个角点，label 2/3）
+    PROMPT_POINT = 1,  // 使用 points 作为提示（支持多个点，每点带正负标签）
+};
+
+// 单个提示点（标签强制提供）
+struct PromptPoint {
+    cv::Point point;
+    int       label;   // 1=正(前景)，0=负(背景)；禁止使用 -1（-1 是内部占位语义）
 };
 
 struct ParamsSam2{
-    uint type = PromptBox; // 0使用box，1使用point
-    cv::Rect prompt_box;
-    cv::Point prompt_point;
+    uint type = PROMPT_BOX;            // 0使用box，1使用point
+    cv::Rect prompt_box;              // type=0 时使用
+    std::vector<PromptPoint> points;  // type=1 时使用，至少 1 个点
 };
 
 
@@ -242,7 +251,7 @@ class Sam2Singleton : public yo::Model
         std::vector<cv::Mat> input_images;
         std::vector<ParamsSam2> parms;
         int batch_size;
-        int num_points = 2;   // 每个目标的提示点数：box=2，point=1
+        int num_points = 2;   // 每个目标的提示点数：box=2，point=点数(≤MAX_POINTS)
         std::vector<cv::Mat> last_masks;  // 每个目标的最新二值mask，长度 = batch_size
         InferenceStatus infer_status;
         Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -262,7 +271,7 @@ class Sam2Singleton : public yo::Model
         void img_decoder_KF(std::vector<Ort::Value>& decoderKfIn, sKfOut& kftmp);
         void creatImageDecoder_First(std::vector<Ort::Value> &ImageDecoder_First_out);
         void creatPointInput(std::vector<float> &point_val, std::vector<int> &point_labels);
-        int resolveNumPoints();   // 由 parms 推导 num_points，并校验同批提示类型一致
+        int resolveNumPoints();   // 由 parms 推导 num_points（截断到 MAX_POINTS 并校验同批一致）
         void creatTensorImageDecoder_Second(std::vector<Ort::Value> &img_decoder_out);
         void creatTensorMemEncoder(std::vector<Ort::Value> &MemEncoder_out);
         void createTensorImgEncoder(std::vector<Ort::Value>& img_encoder_out);

@@ -76,7 +76,7 @@ bool Sam2Singleton::initialize(std::vector<std::string>& tensorrt_paths, int tra
         // 点模式 warm-up（num_points=1），避免首次点调用才做形状切换
         {
             std::vector<ParamsSam2> point_parms;
-            point_parms.push_back({(uint)PromptPoint, cv::Rect(), cv::Point(500, 400)});
+            point_parms.push_back({(uint)PROMPT_POINT, cv::Rect(), {{cv::Point(500, 400), 1}}});
             // 注意：必须用 setparms_InSam2Process 设置（它会 resize status_recent/obj_ptr_recent），
             // 上一步 clear 已把这两个 vector 清空为长度 0，直接赋值 parms 会导致后续越界
             setparms_InSam2Process(point_parms);
@@ -2340,10 +2340,10 @@ void TensorRTInference::infer_ImageDecoder(std::vector<float>& point_val,
 }
 
 
-// 由 parms 推导每个目标的提示点数，并校验同批提示类型一致
+// 由 parms 推导每个目标的提示点数，并校验同批一致
 //   box   -> 2（两个角点）
-//   point -> 1（一个前景点）
-// 注意：point_coords 是 [B, N, 2] 的稠密张量，N 全批唯一，故同批类型必须一致
+//   point -> 点数（超过 MAX_POINTS 截断取前 MAX_POINTS 个）
+// 注意：point_coords 是 [B, N, 2] 的稠密张量，N 全批唯一，故同批点数必须一致
 int Sam2Singleton::resolveNumPoints()
 {
     if (this->parms.empty()) {
@@ -2357,7 +2357,34 @@ int Sam2Singleton::resolveNumPoints()
         }
     }
 
-    this->num_points = (PromptPoint == first_type) ? 1 : 2;
+    if (PROMPT_POINT == first_type)
+    {
+        // 点数按批内第一个目标的点数（截断到 MAX_POINTS）确定，其余目标必须一致
+        int expect = std::min((int)this->parms[0].points.size(), MAX_POINTS);
+        if (expect < 1) {
+            throw std::runtime_error("point prompt requires at least one point");
+        }
+        for (size_t i = 0; i < this->parms.size(); i++) {
+            int n = std::min((int)this->parms[i].points.size(), MAX_POINTS);
+            if (n != expect) {
+                throw std::runtime_error("all targets in one batch must use the same number of points");
+            }
+            // 至少 1 个正点：全负会导致 mask 面积为 0（模型硬约束）
+            bool has_pos = false;
+            for (int k = 0; k < n; k++) {
+                if (1 == this->parms[i].points[k].label) { has_pos = true; break; }
+            }
+            if (!has_pos) {
+                throw std::runtime_error("point prompt requires at least one positive point (label=1)");
+            }
+        }
+        this->num_points = expect;
+    }
+    else
+    {
+        this->num_points = 2;
+    }
+
     // 同步到 decoder 引擎，保证运行期形状与拷贝长度一致
     ImageDecoder_engine->num_points = this->num_points;
     return this->num_points;
@@ -2372,14 +2399,17 @@ void Sam2Singleton::creatPointInput(std::vector<float> &point_val, std::vector<i
         }
         for(size_t i = 0; i < parms.size(); i++)
         {
-            if(PromptPoint == parms[i].type)
+            if(PROMPT_POINT == parms[i].type)
             {
-                // 点提示：送一个前景点，label=1
-                float px = 1024.0f * parms[i].prompt_point.x / ori_img->cols;
-                float py = 1024.0f * parms[i].prompt_point.y / ori_img->rows;
-                point_val.push_back(px);
-                point_val.push_back(py);
-                point_labels.push_back(1);
+                // 点提示：逐个送点（坐标缩放到 0~1024），label 由调用方给定（1=正/0=负）
+                // 超过 num_points 的点裁掉（与 resolveNumPoints 的截断保持一致）
+                int used = std::min((int)parms[i].points.size(), this->num_points);
+                for (int k = 0; k < used; k++)
+                {
+                    point_val.push_back(1024.0f * parms[i].points[k].point.x / ori_img->cols);
+                    point_val.push_back(1024.0f * parms[i].points[k].point.y / ori_img->rows);
+                    point_labels.push_back(parms[i].points[k].label);
+                }
             }
             else
             {
@@ -3232,10 +3262,10 @@ void TensorRTInference::allocateInputAndOutputMemory()
         outputData.clear();
         outputSizes.clear();
 
-        // 输入内存按引擎支持的最大点数分配（profile max = 2），
+        // 输入内存按引擎支持的最大点数分配（profile max = MAX_POINTS），
         // 运行期由 infer_ImageDecoder 按实际 num_points 设置形状与拷贝长度，
-        // 这样框(2)/点(1)两种模式可安全复用同一份已分配内存
-        const int alloc_num_points = 2;
+        // 这样框(2)/点(1~MAX_POINTS)各种模式可安全复用同一份已分配内存
+        const int alloc_num_points = MAX_POINTS;
         std::vector<nvinfer1::Dims> inputShapes = {
             {3, {this->batch_size, alloc_num_points, 2}},  
             {2, {this->batch_size, alloc_num_points}},
@@ -3337,9 +3367,9 @@ void Sam2Singleton::sam2Process(std::vector<cv::Mat> &images, cv::Rect& rectInfo
 
     std::vector<ParamsSam2> parms1;
     parms1.push_back({
-        0,
+        (uint)PROMPT_BOX,
         rectInfoIn,
-        {0, 0}
+        {}
     });
 
     setparms_InSam2Process(parms1);

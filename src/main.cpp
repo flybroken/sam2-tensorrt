@@ -44,7 +44,7 @@ static void demo_single_image(
 
     // step2: setparms 设定单目标 + 分配 batch=1 内存
     std::vector<TrackerBySAM2::ParamsSam2> parms;
-    parms.push_back({0, init_bbox, {0, 0}});
+    parms.push_back({TrackerBySAM2::PROMPTTYPE::PROMPT_BOX, init_bbox, {}});
     sam2.setparms(parms);
 
     cv::Mat image = cv::imread(image_path);
@@ -100,7 +100,7 @@ static void demo_video(
 
     // step2: setparms 设定单目标 + 分配 batch=1 内存
     std::vector<TrackerBySAM2::ParamsSam2> parms;
-    parms.push_back({0, init_bbox, {0, 0}});
+    parms.push_back({TrackerBySAM2::PROMPTTYPE::PROMPT_BOX, init_bbox, {}});
     sam2.setparms(parms);
 
     // step3: 逐帧 inference + benchmark + 视频输出
@@ -183,7 +183,7 @@ static void demo_mot_video(
     // step2: setparms 设定多目标 + 分配 batch=N 内存
     std::vector<TrackerBySAM2::ParamsSam2> parms;
     for (const auto& bbox : init_bboxes) {
-        parms.push_back({0, bbox, {0, 0}});
+        parms.push_back({TrackerBySAM2::PROMPTTYPE::PROMPT_BOX, bbox, {}});
     }
     std::cout << "Tracking " << parms.size() << " targets.\n";
     sam2.setparms(parms);
@@ -243,9 +243,10 @@ static void demo_mot_video(
 }
 
 // ---- Demo 4: 视频单目标追踪（点提示初始化, SingleTrack） ----
+// points: 每个点带标签（1=正/前景，0=负/背景），至少 1 个正点
 static void demo_video_point(
     const std::string& video_path,
-    const cv::Point&   init_point,
+    const std::vector<TrackerBySAM2::PromptPoint>& points,
     int                max_frames)
 {
     std::cout << "\n===== Demo: Video Point Prompt (initialize → setparms → inference) =====\n";
@@ -273,7 +274,7 @@ static void demo_video_point(
 
     // step2: setparms 设定单目标点提示 + 分配 batch=1 内存
     std::vector<TrackerBySAM2::ParamsSam2> parms;
-    parms.push_back({TrackerBySAM2::PROMPTTYPE::PromptPoint, cv::Rect(), init_point});
+    parms.push_back({TrackerBySAM2::PROMPTTYPE::PROMPT_POINT, cv::Rect(), points});
     sam2.setparms(parms);
 
     // step3: 逐帧 inference + benchmark + 视频输出
@@ -291,11 +292,15 @@ static void demo_video_point(
         sam2.inference(frames[i]);
         rect_out.push_back(sam2.LastRect);
 
-        // 当前追踪框（绿色）+ 初始点（红色圆点）
+        // 当前追踪框（绿色）+ 初始点（正点红，负点蓝）
         cv::Mat out_frame = frames[i].clone();
         cv::rectangle(out_frame, sam2.LastRect, cv::Scalar(0, 255, 0), 2);
         if (0 == i) {
-            cv::circle(out_frame, init_point, 8, cv::Scalar(0, 0, 255), -1);
+            for (const auto& p : points) {
+                cv::Scalar color = (1 == p.label) ? cv::Scalar(0, 0, 255)   // 正点=红
+                                                  : cv::Scalar(255, 0, 0);  // 负点=蓝
+                cv::circle(out_frame, p.point, 8, color, -1);
+            }
         }
         if (writer.isOpened()) {
             writer.write(out_frame);
@@ -321,7 +326,12 @@ static void demo_video_point(
     std::cout << "Total time:       " << total_ms << " ms\n";
     std::cout << "Avg per frame:    " << avg_ms   << " ms\n";
     std::cout << "Avg FPS:         " << avg_fps  << "\n";
-    std::cout << "Init point:       (" << init_point.x << ", " << init_point.y << ")\n";
+    std::cout << "Init points:      " << points.size() << " (";
+    for (size_t k = 0; k < points.size(); k++) {
+        std::cout << "(" << points[k].point.x << "," << points[k].point.y << ",L" << points[k].label << ")";
+        if (k + 1 < points.size()) std::cout << " ";
+    }
+    std::cout << ")\n";
     std::cout << "Final bbox:       " << rect_out.back() << "\n";
     std::cout << "Output saved as:  imageStart.jpg / imageEnd.jpg / point_track_output.avi\n";
 }
@@ -332,17 +342,19 @@ static void print_usage(const char* prog) {
               << "  " << prog << " image <path> <x> <y> <w> <h>\n"
               << "  " << prog << " video <path> <x> <y> <w> <h> [max_frames]\n"
               << "  " << prog << " mot   <path> <x1> <y1> <w1> <h1> [x2 y2 w2 h2 ...] [max_frames]\n"
-              << "  " << prog << " point <path> <x> <y> [max_frames]\n\n"
+              << "  " << prog << " point <path> <x> <y> <label> [x2 y2 l2 ...] [max_frames]\n\n"
               << "Modes:\n"
               << "  image   Single image inference  (SingleTrack, box prompt)\n"
               << "  video   Video single target     (SingleTrack, box prompt)\n"
               << "  mot     Video multi-target      (MultiTrack, box prompt)\n"
-              << "  point   Video single target     (SingleTrack, point prompt)\n\n"
+              << "  point   Video single target     (SingleTrack, point prompt, 支持多点)\n\n"
+              << "Point label: 1=正(前景), 0=负(背景)，至少1个正点\n\n"
               << "Examples:\n"
               << "  " << prog << " image test/image.jpg 100 200 150 300\n"
               << "  " << prog << " video test/input.mp4 100 200 150 300 50\n"
               << "  " << prog << " mot   test/input.mp4 100 200 150 300 400 500 200 180\n"
-              << "  " << prog << " point test/input.mp4 500 400 50\n";
+              << "  " << prog << " point test/input.mp4 500 400 1 50\n"
+              << "  " << prog << " point test/input.mp4 500 400 1 520 410 1 300 300 0 50\n";
 }
 
 int main(int argc, char** argv) {
@@ -354,8 +366,10 @@ int main(int argc, char** argv) {
     std::string mode       = argv[1];
     std::string media_path = argv[2];
 
-    // point 模式只需 <x> <y>；其余模式需要 4 个 bbox 参数
-    if (argc < 7 && mode != "point") {
+    // point 模式需要至少一个点(<x> <y> <label>)；其余模式需要 4 个 bbox 参数
+    if (mode == "point") {
+        if (argc < 6) { print_usage(argv[0]); return 1; }
+    } else if (argc < 7) {
         print_usage(argv[0]);
         return 1;
     }
@@ -425,13 +439,38 @@ int main(int argc, char** argv) {
                   << ", Max frames: " << max_frames << std::endl;
         demo_mot_video(media_path, init_bboxes, max_frames);
     } else if (mode == "point") {
-        // 点提示模式: x y [max_frames]
-        cv::Point init_point(std::stoi(argv[3]), std::stoi(argv[4]));
-        int max_frames = (argc >= 6) ? std::stoi(argv[5]) : 50;
+        // 点提示模式: <x> <y> <label> [x2 y2 l2 ...] [max_frames]
+        // 每 3 个参数构成一个点；若剩余 1 个参数则视为 max_frames
+        std::vector<TrackerBySAM2::PromptPoint> points;
+        int idx = 3;
+        int max_frames = 50;
+        while (idx < argc) {
+            if (idx + 2 < argc) {
+                points.push_back({cv::Point(std::stoi(argv[idx]), std::stoi(argv[idx + 1])),
+                                  std::stoi(argv[idx + 2])});
+                idx += 3;
+            } else if (idx + 1 < argc) {
+                // 只剩 2 个：不足一个点，视为错误用法（此处按 max_frames 处理最后一个）
+                max_frames = std::stoi(argv[idx]);
+                idx += 1;
+                break;
+            } else {
+                max_frames = std::stoi(argv[idx]);
+                idx += 1;
+                break;
+            }
+        }
+
+        if (points.empty()) {
+            std::cerr << "point mode requires at least one point (x y label).\n";
+            print_usage(argv[0]);
+            return 1;
+        }
+
         std::cout << "Mode: " << mode << ", Path: " << media_path
-                  << ", Init point: (" << init_point.x << ", " << init_point.y << ")"
+                  << ", Points: " << points.size()
                   << ", Max frames: " << max_frames << std::endl;
-        demo_video_point(media_path, init_point, max_frames);
+        demo_video_point(media_path, points, max_frames);
     } else {
         std::cerr << "Unknown mode: " << mode << "\n";
         print_usage(argv[0]);

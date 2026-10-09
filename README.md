@@ -155,10 +155,10 @@ Example:
         注意：如果转trt有INT32或INT64的数值问题，那么将出问题的onnx，先用repo中的process.py处理下 仓库中的onnx均是已处理过的
 
 > **关于 image_decoder 的 num_points（点提示）**
-> `point_coords` 第二维即 num_points：**2 = 框提示**（两个角点，label 2/3），**1 = 点提示**（一个前景点，label 1）。
-> 上面的 profile 已把 num_points 范围设为 **[1,2]**，一份 engine 同时支持框和点。注意：
+> `point_coords` 第二维即 num_points：**2 = 框提示**（两个角点，label 2/3），**1~8 = 点提示**（每点带 label，1=正/0=负）。
+> 上面的 profile 把 num_points 范围设为 **[1,8]**，一份 engine 同时支持框与多点。注意：
 > - **必须用动态模式导出 onnx**（`export_onnx.py` 不要加 `--static_batch`），否则 num_points 会被锁成 2，点模式无法使用。
-> - 旧的 `--minShapes=point_coords:1x2x2` 把点数下界钉死在 2，需改为 `1x1x2`。
+> - 旧的 `--minShapes=point_coords:1x2x2` 把点数下界钉死在 2，需改为 `1x1x2`；点数上限由 `maxShapes` 决定（与 C++ 的 `MAX_POINTS` 保持一致）。
 > - 导出脚本现在会自动执行 dtype 清洗（把 DOUBLE 常量转 FLOAT32），产物可直接被 onnxruntime 加载。
 > 详细输入方式见 [INPUT_MODES.md](INPUT_MODES.md)。
 
@@ -186,8 +186,8 @@ cmake --build build -j$(nproc)
 # Video multi target (MultiTrack) 50 = video frame number
 ./bin/SAM2 mot test/input.mp4 100 200 150 300 400 500 200 180 50
 
-# Video single target with POINT prompt (SingleTrack) 50 = video frame number
-./bin/SAM2 point test/input.mp4 500 400 50
+# Video single target with POINT prompt (SingleTrack, 支持多点: x y label ...)
+./bin/SAM2 point test/input.mp4 500 400 1 50
 ```
 
 ### API
@@ -206,7 +206,7 @@ sam2.initialize(engine_paths, TrackerBySAM2::SingleTrack, /*gpuId=*/0);
 
 // step2: setparms 设定单目标参数
 std::vector<TrackerBySAM2::ParamsSam2> parms;
-parms.push_back({/*type=*/0, cv::Rect{x, y, w, h}, {/*point=*/0, 0}});
+parms.push_back({TrackerBySAM2::PROMPTTYPE::PROMPT_BOX, cv::Rect{x, y, w, h}, {}});
 sam2.setparms(parms);
 
 // step3: 逐帧 inference
@@ -223,7 +223,7 @@ sam2.initialize(engine_paths, TrackerBySAM2::MultiTrack, /*gpuId=*/0);
 
 std::vector<TrackerBySAM2::ParamsSam2> multi_parms;
 for (auto& bbox : init_bboxes) {
-    multi_parms.push_back({0, bbox, {0, 0}});
+    multi_parms.push_back({TrackerBySAM2::PROMPTTYPE::PROMPT_BOX, bbox, {}});
 }
 sam2.setparms(multi_parms);
 
@@ -236,10 +236,18 @@ for (auto& frame : frames) {
 // SingleTrack 点提示（点分割）
 // ===========================
 
-// type = PromptPoint(1)，使用 prompt_point（原图像素坐标）
+// point 模式：{点, 标签}，1=正(前景), 0=负(背景)；至少1个正点
+// 单点
 std::vector<TrackerBySAM2::ParamsSam2> point_parms;
-point_parms.push_back({TrackerBySAM2::PROMPTTYPE::PromptPoint, cv::Rect(), cv::Point(500, 400)});
+point_parms.push_back({TrackerBySAM2::PROMPTTYPE::PROMPT_POINT, cv::Rect(),
+                       {{cv::Point(500, 400), 1}}});
 sam2.setparms(point_parms);
+
+// 同一目标多点（2正1负）
+std::vector<TrackerBySAM2::ParamsSam2> multi_pt_parms;
+multi_pt_parms.push_back({TrackerBySAM2::PROMPTTYPE::PROMPT_POINT, cv::Rect(),
+                          {{cv::Point(500,400),1}, {cv::Point(520,410),1}, {cv::Point(300,300),0}}});
+// sam2.setparms(multi_pt_parms);
 
 for (auto& frame : frames) {
     sam2.inference(frame);
@@ -247,7 +255,7 @@ for (auto& frame : frames) {
     const auto& masks = sam2.getLastMasks();        // 二值 mask（CV_8UC1, 0/255），长度 = 目标数
 }
 
-// 注意：同一批的提示类型必须一致（要么全框 N=2，要么全点 N=1），混合会抛异常
+// 注意：同一批的提示类型/点数必须一致；每点必有标签；点数上限 8（超出截断）
 ```
 
 ## 📦 Models
