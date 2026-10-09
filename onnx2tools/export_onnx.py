@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import onnx
 import argparse
@@ -7,6 +8,29 @@ from src.Module import MemAttention
 from src.Module import MemEncoder
 from src.Module import ImageDecoder, ImageDecoder_Start, ImageDecoder_End, ImageEncoder_MotObj
 from sam2.build_sam import build_sam2_video_predictor, build_sam2
+
+
+def sanitize_onnx_dtypes(model_path):
+    """把 ONNX 中的 DOUBLE 常量统一转成 FLOAT32。
+
+    原因：torch.where(cond, tensor, -1024.0) 这类写法会把 Python float
+    落成 double 常量，导致 Where 的 X/Y 类型不一致（违反 ONNX 规范）。
+    onnxruntime 会拒绝加载，TensorRT 虽能容忍但不规范。
+    """
+    model = onnx.load(model_path)
+    for tensor in model.graph.initializer:
+        if tensor.data_type == onnx.TensorProto.DOUBLE:
+            arr = onnx.numpy_helper.to_array(tensor).astype(np.float32)
+            tensor.CopyFrom(onnx.numpy_helper.from_array(arr, tensor.name))
+    for node in model.graph.node:
+        if node.op_type == "Constant":
+            for attr in node.attribute:
+                if attr.name == "value" and attr.t.data_type == onnx.TensorProto.DOUBLE:
+                    arr = onnx.numpy_helper.to_array(attr.t).astype(np.float32)
+                    attr.t.CopyFrom(onnx.numpy_helper.from_array(arr))
+    onnx.checker.check_model(model)
+    onnx.save(model, model_path)
+    print(f"{model_path} dtype sanitized!")
 
 def export_image_encoder(model, onnx_path, dynamic_batch=True):
     input_img = torch.randn(1, 3, 1024, 1024).cpu()
@@ -871,6 +895,7 @@ def export_image_decoderStart(model, onnx_path, dynamic_batch=True):
     else:
         simplified_model, check = simplify(original_model, skip_shape_inference=True)
     onnx.save(simplified_model, onnx_path+"image_decoderStart.onnx")
+    sanitize_onnx_dtypes(onnx_path+"image_decoderStart.onnx")
     # 检查检查.onnx格式是否正确
     onnx_model = onnx.load(onnx_path+"image_decoderStart.onnx")
     onnx.checker.check_model(onnx_model)
@@ -926,6 +951,7 @@ def export_image_decoderEnd(model, onnx_path, dynamic_batch=True):
     else:
         simplified_model, check = simplify(original_model, skip_shape_inference=True)
     onnx.save(simplified_model, onnx_path+"image_decoderEnd.onnx")
+    sanitize_onnx_dtypes(onnx_path+"image_decoderEnd.onnx")
     # 检查检查.onnx格式是否正确
     onnx_model = onnx.load(onnx_path+"image_decoderEnd.onnx")
     onnx.checker.check_model(onnx_model)
@@ -985,6 +1011,7 @@ def export_image_decoder(model, onnx_path, dynamic_batch=True):
     else:
         simplified_model, check = simplify(original_model, skip_shape_inference=True)
     onnx.save(simplified_model, onnx_path+"image_decoder.onnx")
+    sanitize_onnx_dtypes(onnx_path+"image_decoder.onnx")
     # 检查检查.onnx格式是否正确
     onnx_model = onnx.load(onnx_path+"image_decoder.onnx")
     onnx.checker.check_model(onnx_model)

@@ -242,30 +242,123 @@ static void demo_mot_video(
     std::cout << "Output saved as:  imageStart.jpg / imageEnd.jpg / multi_track_output.avi\n";
 }
 
+// ---- Demo 4: 视频单目标追踪（点提示初始化, SingleTrack） ----
+static void demo_video_point(
+    const std::string& video_path,
+    const cv::Point&   init_point,
+    int                max_frames)
+{
+    std::cout << "\n===== Demo: Video Point Prompt (initialize → setparms → inference) =====\n";
+
+    cv::VideoCapture cap(video_path);
+    if (!cap.isOpened()) {
+        std::cerr << "Failed to open video: " << video_path << std::endl;
+        return;
+    }
+    print_video_info(cap);
+
+    std::vector<cv::Mat> frames;
+    cv::Mat frame;
+    while (frames.size() < static_cast<size_t>(max_frames)) {
+        if (!cap.read(frame) || frame.empty()) break;
+        frames.push_back(frame.clone());
+    }
+    cap.release();
+    std::cout << "Loaded " << frames.size() << " frames.\n";
+
+    auto& sam2 = TrackerBySAM2::Sam2Singleton::getInstance();
+
+    // step1: initialize 构建引擎
+    sam2.initialize(singleObj_engine_paths, TrackerBySAM2::TRACKTYPEBYSAM2::SingleTrack, 0);
+
+    // step2: setparms 设定单目标点提示 + 分配 batch=1 内存
+    std::vector<TrackerBySAM2::ParamsSam2> parms;
+    parms.push_back({TrackerBySAM2::PROMPTTYPE::PromptPoint, cv::Rect(), init_point});
+    sam2.setparms(parms);
+
+    // step3: 逐帧 inference + benchmark + 视频输出
+    std::vector<cv::Rect> rect_out;
+    cv::VideoWriter writer("point_track_output.avi",
+                           cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
+                           30, frames[0].size());
+    if (!writer.isOpened()) {
+        std::cerr << "Failed to open video writer.\n";
+    }
+
+    auto t_start = std::chrono::high_resolution_clock::now();
+
+    for (size_t i = 0; i < frames.size(); ++i) {
+        sam2.inference(frames[i]);
+        rect_out.push_back(sam2.LastRect);
+
+        // 当前追踪框（绿色）+ 初始点（红色圆点）
+        cv::Mat out_frame = frames[i].clone();
+        cv::rectangle(out_frame, sam2.LastRect, cv::Scalar(0, 255, 0), 2);
+        if (0 == i) {
+            cv::circle(out_frame, init_point, 8, cv::Scalar(0, 0, 255), -1);
+        }
+        if (writer.isOpened()) {
+            writer.write(out_frame);
+        }
+
+        if (i == 0) {
+            cv::imwrite("imageStart.jpg", out_frame);
+        }
+        if (i == frames.size() - 1) {
+            cv::imwrite("imageEnd.jpg", out_frame);
+        }
+    }
+
+    writer.release();
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+    double avg_ms   = total_ms / frames.size();
+    double avg_fps  = 1000.0 / avg_ms;
+
+    std::cout << "\n--- Benchmark (Point Prompt) ---\n";
+    std::cout << "Frames processed: " << frames.size() << "\n";
+    std::cout << "Total time:       " << total_ms << " ms\n";
+    std::cout << "Avg per frame:    " << avg_ms   << " ms\n";
+    std::cout << "Avg FPS:         " << avg_fps  << "\n";
+    std::cout << "Init point:       (" << init_point.x << ", " << init_point.y << ")\n";
+    std::cout << "Final bbox:       " << rect_out.back() << "\n";
+    std::cout << "Output saved as:  imageStart.jpg / imageEnd.jpg / point_track_output.avi\n";
+}
+
 // ---- 用法说明 ----
 static void print_usage(const char* prog) {
     std::cout << "Usage:\n"
               << "  " << prog << " image <path> <x> <y> <w> <h>\n"
               << "  " << prog << " video <path> <x> <y> <w> <h> [max_frames]\n"
-              << "  " << prog << " mot   <path> <x1> <y1> <w1> <h1> [x2 y2 w2 h2 ...] [max_frames]\n\n"
+              << "  " << prog << " mot   <path> <x1> <y1> <w1> <h1> [x2 y2 w2 h2 ...] [max_frames]\n"
+              << "  " << prog << " point <path> <x> <y> [max_frames]\n\n"
               << "Modes:\n"
-              << "  image   Single image inference  (SingleTrack)\n"
-              << "  video   Video single target     (SingleTrack)\n"
-              << "  mot     Video multi-target      (MultiTrack)\n\n"
+              << "  image   Single image inference  (SingleTrack, box prompt)\n"
+              << "  video   Video single target     (SingleTrack, box prompt)\n"
+              << "  mot     Video multi-target      (MultiTrack, box prompt)\n"
+              << "  point   Video single target     (SingleTrack, point prompt)\n\n"
               << "Examples:\n"
               << "  " << prog << " image test/image.jpg 100 200 150 300\n"
               << "  " << prog << " video test/input.mp4 100 200 150 300 50\n"
-              << "  " << prog << " mot   test/input.mp4 100 200 150 300 400 500 200 180\n";
+              << "  " << prog << " mot   test/input.mp4 100 200 150 300 400 500 200 180\n"
+              << "  " << prog << " point test/input.mp4 500 400 50\n";
 }
 
 int main(int argc, char** argv) {
-    if (argc < 7) {
+    if (argc < 3) {
         print_usage(argv[0]);
         return 1;
     }
 
     std::string mode       = argv[1];
     std::string media_path = argv[2];
+
+    // point 模式只需 <x> <y>；其余模式需要 4 个 bbox 参数
+    if (argc < 7 && mode != "point") {
+        print_usage(argv[0]);
+        return 1;
+    }
 
     if (mode == "image") {
         cv::Rect init_bbox(
@@ -331,6 +424,14 @@ int main(int argc, char** argv) {
                   << ", Targets: " << init_bboxes.size()
                   << ", Max frames: " << max_frames << std::endl;
         demo_mot_video(media_path, init_bboxes, max_frames);
+    } else if (mode == "point") {
+        // 点提示模式: x y [max_frames]
+        cv::Point init_point(std::stoi(argv[3]), std::stoi(argv[4]));
+        int max_frames = (argc >= 6) ? std::stoi(argv[5]) : 50;
+        std::cout << "Mode: " << mode << ", Path: " << media_path
+                  << ", Init point: (" << init_point.x << ", " << init_point.y << ")"
+                  << ", Max frames: " << max_frames << std::endl;
+        demo_video_point(media_path, init_point, max_frames);
     } else {
         std::cerr << "Unknown mode: " << mode << "\n";
         print_usage(argv[0]);

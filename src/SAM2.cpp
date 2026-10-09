@@ -73,6 +73,33 @@ bool Sam2Singleton::initialize(std::vector<std::string>& tensorrt_paths, int tra
         this->parms.clear();
         this->LastRect = cv::Rect();
 
+        // 点模式 warm-up（num_points=1），避免首次点调用才做形状切换
+        {
+            std::vector<ParamsSam2> point_parms;
+            point_parms.push_back({(uint)PromptPoint, cv::Rect(), cv::Point(500, 400)});
+            // 注意：必须用 setparms_InSam2Process 设置（它会 resize status_recent/obj_ptr_recent），
+            // 上一步 clear 已把这两个 vector 清空为长度 0，直接赋值 parms 会导致后续越界
+            setparms_InSam2Process(point_parms);
+
+            for (size_t i = 0; i < images.size() && i < 3; i++)
+            {
+                this->inference(images[i]);
+            }
+
+            // 恢复记忆状态与参数，num_points 复位为 box 默认值
+            this->infer_status.current_frame = 0;
+            this->infer_status.obj_ptr_first.clear();
+            this->infer_status.status_first.clear();
+            this->infer_status.status_recent.clear();
+            this->infer_status.obj_ptr_recent.clear();
+            this->infer_status.last_memoryFeature.clear();
+            this->infer_status.last_objPtr.clear();
+            this->parms.clear();
+            this->num_points = 2;
+            ImageDecoder_engine->num_points = this->num_points;   // 复位引擎点数，保持 box 就绪
+            this->LastRect = cv::Rect();
+        }
+
         is_initialized.store(true);
     }
     else if (TRACKTYPEBYSAM2::MultiTrack == this->trackType)
@@ -1548,6 +1575,9 @@ void Sam2Singleton::postprocess(std::vector<Ort::Value> &output_tensors){
         y_max, x_max = non_zero_indices.max(axis=0).tolist()
         bbox = [x_min, y_min, x_max - x_min, y_max - y_min]
 */
+    // 保存每个目标的二值mask（底层复用同一块 pinned 内存，故需逐个拷贝）
+    last_masks.resize(this->batch_size);
+
     for(size_t i = 0; i < this->batch_size; i++)
     {
         float* output =  output_tensors[0].GetTensorMutableData<float>();    //可变数据
@@ -1564,6 +1594,9 @@ void Sam2Singleton::postprocess(std::vector<Ort::Value> &output_tensors){
         outimg.convertTo(page_locked_bufferPostProcess, CV_8UC1, 255);
 
         cv::Rect bbox = getOutBBoxFromSam2Out(page_locked_bufferPostProcess);
+
+        // getOutBBoxFromSam2Out 内部已做阈值化，此处 page_locked_bufferPostProcess 即二值mask
+        page_locked_bufferPostProcess.copyTo(last_masks[i]);
 
         #ifdef DRAW_PERSON
         cv::Scalar color = g_vcolors[i % g_vcolors.size()];
@@ -1620,6 +1653,7 @@ cv::Rect Sam2Singleton::getOutBBoxFromSam2Out(cv::Mat& outimg){
 int Sam2Singleton::setparms(std::vector<ParamsSam2>& parms){
     this->parms = parms;
     this->batch_size = this->parms.size();
+    resolveNumPoints();
     setparms_AllocateBatch_One();
     return 1;
 }
@@ -2166,8 +2200,8 @@ void TensorRTInference::infer_ImageDecoder(std::vector<float>& point_val,
 
     // 设置输入张量的形状
     std::vector<nvinfer1::Dims> inputShapes = {
-        {3, {this->batch_size, 2, 2}},  
-        {2, {this->batch_size, 2}},
+        {3, {this->batch_size, this->num_points, 2}},  
+        {2, {this->batch_size, this->num_points}},
         {4, {this->batch_size, 256, 64, 64}}, 
         {4, {this->batch_size, 32, 256, 256}}, 
         {4, {this->batch_size, 64, 128, 128}}
@@ -2195,8 +2229,10 @@ void TensorRTInference::infer_ImageDecoder(std::vector<float>& point_val,
         // 设置输入张量的地址
 
         // 将输入数据从主机拷贝到 GPU
+        // 注意：拷贝长度必须按当前实际点数计算，不能沿用 profile 的 inputSize，否则会越界读
         if (inputNames[i] == "point_coords") {
-            cudaMemcpy(gpuMemory, point_val.data(), inputSize, cudaMemcpyHostToDevice);
+            size_t coordBytes = (size_t)this->batch_size * this->num_points * 2 * sizeof(float);
+            cudaMemcpy(gpuMemory, point_val.data(), coordBytes, cudaMemcpyHostToDevice);
             
             #ifdef TENSORRT_8_X
             device_buffers_ImageDecoder.push_back(gpuMemory);
@@ -2204,7 +2240,8 @@ void TensorRTInference::infer_ImageDecoder(std::vector<float>& point_val,
             context->setTensorAddress(inputNames[i].c_str(), gpuMemory);
             #endif
         } else if (inputNames[i] == "point_labels") {
-            cudaMemcpy(gpuMemory, point_labels.data(), inputSize, cudaMemcpyHostToDevice);
+            size_t labelBytes = (size_t)this->batch_size * this->num_points * sizeof(int32_t);
+            cudaMemcpy(gpuMemory, point_labels.data(), labelBytes, cudaMemcpyHostToDevice);
 
             #ifdef TENSORRT_8_X
             device_buffers_ImageDecoder.push_back(gpuMemory);
@@ -2303,13 +2340,50 @@ void TensorRTInference::infer_ImageDecoder(std::vector<float>& point_val,
 }
 
 
+// 由 parms 推导每个目标的提示点数，并校验同批提示类型一致
+//   box   -> 2（两个角点）
+//   point -> 1（一个前景点）
+// 注意：point_coords 是 [B, N, 2] 的稠密张量，N 全批唯一，故同批类型必须一致
+int Sam2Singleton::resolveNumPoints()
+{
+    if (this->parms.empty()) {
+        throw std::runtime_error("parms is empty, cannot resolve num_points");
+    }
+
+    const uint first_type = this->parms[0].type;
+    for (size_t i = 1; i < this->parms.size(); i++) {
+        if (this->parms[i].type != first_type) {
+            throw std::runtime_error("mixed prompt types in one batch is not supported");
+        }
+    }
+
+    this->num_points = (PromptPoint == first_type) ? 1 : 2;
+    // 同步到 decoder 引擎，保证运行期形状与拷贝长度一致
+    ImageDecoder_engine->num_points = this->num_points;
+    return this->num_points;
+}
+
 void Sam2Singleton::creatPointInput(std::vector<float> &point_val, std::vector<int> &point_labels)
 {
     if (0 == this->infer_status.current_frame)
     {
-        if(parms.size()){
-            for(size_t i = 0; i < parms.size(); i++)
+        if(!parms.size()){
+            throw std::runtime_error("prompt parms is empty, cannot process");
+        }
+        for(size_t i = 0; i < parms.size(); i++)
+        {
+            if(PromptPoint == parms[i].type)
             {
+                // 点提示：送一个前景点，label=1
+                float px = 1024.0f * parms[i].prompt_point.x / ori_img->cols;
+                float py = 1024.0f * parms[i].prompt_point.y / ori_img->rows;
+                point_val.push_back(px);
+                point_val.push_back(py);
+                point_labels.push_back(1);
+            }
+            else
+            {
+                // 框提示：送左上、右下两个角点，label=2/3
                 auto box = parms[i].prompt_box;
 
                 box.x = 1024*((float)box.x / ori_img->cols);
@@ -2325,29 +2399,20 @@ void Sam2Singleton::creatPointInput(std::vector<float> &point_val, std::vector<i
                 point_labels.push_back(3);
             }
         }
-        else{
-            throw std::runtime_error("prompt parms is empty, cannot process");
-        }
     }
     
     //warning, 这里在非condition帧的时候 必须送入-1 不能用下面的needpoint来操作-1
     else
     {
+        // 非condition帧：送 num_points 个占位点（坐标全0 + label -1），关闭提示
         for(size_t i = 0; i < parms.size(); i++)
         {
-            auto box = parms[i].prompt_box;
-
-            box.x = 0;
-            box.y = 0;
-            box.width = 0;
-            box.height = 0;
-            point_val.push_back((float)box.x);
-            point_val.push_back((float)box.y);
-            point_val.push_back((float)box.x+box.width);
-            point_val.push_back((float)box.y+box.height);
-
-            point_labels.push_back(-1);
-            point_labels.push_back(-1);
+            for(int k = 0; k < this->num_points; k++)
+            {
+                point_val.push_back(0.0f);
+                point_val.push_back(0.0f);
+                point_labels.push_back(-1);
+            }
         }
     }
 }
@@ -3167,10 +3232,13 @@ void TensorRTInference::allocateInputAndOutputMemory()
         outputData.clear();
         outputSizes.clear();
 
-        // 设置输入张量的形状
+        // 输入内存按引擎支持的最大点数分配（profile max = 2），
+        // 运行期由 infer_ImageDecoder 按实际 num_points 设置形状与拷贝长度，
+        // 这样框(2)/点(1)两种模式可安全复用同一份已分配内存
+        const int alloc_num_points = 2;
         std::vector<nvinfer1::Dims> inputShapes = {
-            {3, {this->batch_size, 2, 2}},  
-            {2, {this->batch_size, 2}},
+            {3, {this->batch_size, alloc_num_points, 2}},  
+            {2, {this->batch_size, alloc_num_points}},
             {4, {this->batch_size, 256, 64, 64}}, 
             {4, {this->batch_size, 32, 256, 256}}, 
             {4, {this->batch_size, 64, 128, 128}}
@@ -3183,7 +3251,8 @@ void TensorRTInference::allocateInputAndOutputMemory()
             for (int j = 0; j < inputShapes[i].nbDims; ++j) {
                 inputSize *= inputShapes[i].d[j];
             }
-            inputSize *= sizeof(float); // 假设输入数据是 float 类型
+            // point_labels 为 int32，其余输入为 float
+            inputSize *= (inputNames[i] == "point_labels") ? sizeof(int32_t) : sizeof(float);
 
             // 分配 GPU 内存
             void* gpuMemory = nullptr;
@@ -3315,6 +3384,7 @@ void Sam2Singleton::sam2Process(std::vector<cv::Mat> &images, cv::Rect& rectInfo
 
 int Sam2Singleton::setparms_InSam2Process(std::vector<ParamsSam2>& parms){
     this->parms = parms;
+    resolveNumPoints();
     infer_status.status_recent.resize(this->batch_size);
     infer_status.obj_ptr_recent.resize(this->batch_size);
     return 1;
